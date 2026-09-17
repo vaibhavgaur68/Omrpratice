@@ -122,6 +122,33 @@
     .mf { flex: 1; }
     .mf label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 5px; }
 
+    /* Test-mode timer picker (Apple Clock style scroll wheel) */
+    .timer-picker-wrap { display: none; margin-bottom: 28px; }
+    .timer-picker-wrap.vis { display: block; }
+    .timer-picker {
+      position: relative; display: flex; align-items: center; justify-content: center;
+      gap: 4px; height: 180px; background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 12px; overflow: hidden;
+    }
+    .picker-col {
+      height: 180px; width: 64px; overflow-y: scroll; scroll-snap-type: y mandatory;
+      -webkit-overflow-scrolling: touch; scrollbar-width: none;
+    }
+    .picker-col::-webkit-scrollbar { display: none; }
+    .picker-pad { height: 72px; }
+    .picker-item {
+      height: 36px; display: flex; align-items: center; justify-content: center;
+      scroll-snap-align: center; font-family: 'Space Mono', monospace; font-size: 19px;
+      color: var(--muted); cursor: pointer; transition: color .15s;
+    }
+    .picker-item.sel { color: var(--accent); font-weight: 700; }
+    .picker-unit { font-size: 11px; color: var(--muted); letter-spacing: 1px; }
+    .picker-highlight {
+      position: absolute; top: 72px; left: 10px; right: 10px; height: 36px;
+      border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+      pointer-events: none;
+    }
+
     .start-btn {
       width: 100%; padding: 14px;
       background: var(--accent); color: #0c0e14;
@@ -152,6 +179,22 @@
       cursor: pointer; transition: opacity .15s; letter-spacing: .5px;
     }
     .sub-btn:hover { opacity: .85; }
+
+    .omr-timer {
+      font-family: 'Space Mono', monospace; font-size: 14px; color: var(--muted); letter-spacing: 1px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .omr-timer strong { color: var(--accent); font-size: 17px; }
+    .omr-timer.low strong { color: var(--wrong); }
+
+    .lock-banner {
+      display: none; align-items: center; gap: 8px;
+      background: rgba(244,67,54,.1); border: 1px solid rgba(244,67,54,.4);
+      color: var(--wrong); font-family: 'Space Mono', monospace; font-size: 12px;
+      letter-spacing: .5px; padding: 10px 16px; border-radius: 10px; margin-bottom: 18px;
+    }
+    .lock-banner.on { display: flex; }
+    .omr-sheet.locked .bbl { pointer-events: none; opacity: .55; }
 
     .omr-sheet {
       max-width: 920px; margin: 0 auto;
@@ -304,6 +347,8 @@
     .res-score small { font-size: 22px; color: var(--muted); }
     .res-marks { font-size: 14px; color: var(--muted); }
     .res-marks strong { color: var(--amber); font-size: 20px; }
+    .res-time { font-size: 13px; color: var(--muted); margin-top: 6px; }
+    .res-time strong { color: var(--accent); }
 
     .res-pct {
       display: inline-block; margin-top: 6px;
@@ -431,6 +476,29 @@
       </div>
     </div>
 
+    <div class="tog-row">
+      <div class="tog-lbl" id="mode-lbl">
+        Test Mode
+        <small id="mode-desc">Off — practice at your own pace, timer just counts up</small>
+      </div>
+      <label class="tog">
+        <input type="checkbox" id="mode-tog">
+        <div class="tog-track"></div>
+        <div class="tog-thumb"></div>
+      </label>
+    </div>
+
+    <div class="timer-picker-wrap" id="timer-wrap">
+      <div class="field-lbl">Set Timer Length</div>
+      <div class="timer-picker">
+        <div class="picker-col" id="picker-hr"></div>
+        <div class="picker-unit">hr</div>
+        <div class="picker-col" id="picker-min"></div>
+        <div class="picker-unit">min</div>
+        <div class="picker-highlight"></div>
+      </div>
+    </div>
+
     <button class="start-btn" onclick="startOMR()">START PRACTICE →</button>
   </div>
 </div>
@@ -439,10 +507,12 @@
 <div class="screen" id="omr-screen">
   <div class="omr-topbar">
     <div class="omr-stat">Answered: <strong id="ans-count">0</strong> / <span id="tot-count">0</span></div>
+    <div class="omr-timer" id="omr-timer" style="display:none">⏱ <strong id="timer-disp">00:00</strong></div>
     <button class="sub-btn" onclick="openKey()">SUBMIT & CHECK →</button>
   </div>
 
-  <div class="omr-sheet">
+  <div class="omr-sheet" id="omr-sheet">
+    <div class="lock-banner" id="lock-banner">⏱ TIME'S UP — sheet locked, opening the answer key…</div>
     <div class="sheet-hdr">
       <div class="sheet-title">OMR ANSWER SHEET</div>
       <div class="sheet-hint">● Click a bubble to select &nbsp;|&nbsp; Click again to deselect</div>
@@ -507,6 +577,7 @@
     <div class="res-score" id="r-score">– <small>/ –</small></div>
     <div class="res-pct">Accuracy: <span id="r-pct">–%</span></div>
     <div class="res-marks" id="r-marks"></div>
+    <div class="res-time" id="r-time"></div>
   </div>
 
   <div class="res-stats">
@@ -528,6 +599,69 @@ let marks = { c: 4, w: -1, s: 0 };
 let studentAns = {};   // { q: 'A'|'B'|'C'|'D' }
 let keyAns = {};       // { q: 'A'|'B'|'C'|'D' }
 let activeTab = 'txt';
+
+// ── Mode / timer state ──────────────────────────────
+let mode = 'practice';   // 'practice' | 'test'
+let testSeconds = 0;     // chosen test duration, in seconds
+let timeUsed = 0;        // seconds elapsed/used, captured at submit
+let timerHandle = null;
+let sessionStart = 0;
+let locked = false;
+const HR_VALUES = [0,1,2,3,4,5,6];
+const MIN_VALUES = [0,5,10,15,20,25,30,35,40,45,50,55];
+const ITEM_H = 36;
+
+document.getElementById('mode-tog').addEventListener('change', e => {
+  mode = e.target.checked ? 'test' : 'practice';
+  document.getElementById('timer-wrap').classList.toggle('vis', mode === 'test');
+  document.getElementById('mode-desc').textContent = mode === 'test'
+    ? 'On — sheet auto-submits when the timer runs out'
+    : 'Off — practice at your own pace, timer just counts up';
+});
+
+// ── Timer picker (Apple Clock style scroll wheel) ───
+function buildPicker(id, values, fmt, defaultVal) {
+  const col = document.getElementById(id);
+  col.innerHTML = `<div class="picker-pad"></div>` +
+    values.map(v => `<div class="picker-item" data-v="${v}">${fmt(v)}</div>`).join('') +
+    `<div class="picker-pad"></div>`;
+  const defIdx = Math.max(0, values.indexOf(defaultVal));
+  col.scrollTop = defIdx * ITEM_H;
+  markSelected(col, defIdx);
+  col.querySelectorAll('.picker-item').forEach((el, i) => {
+    el.addEventListener('click', () => col.scrollTo({ top: i * ITEM_H, behavior: 'smooth' }));
+  });
+  let t;
+  col.addEventListener('scroll', () => {
+    clearTimeout(t);
+    t = setTimeout(() => snapPicker(col, values), 100);
+  });
+}
+function markSelected(col, idx) {
+  const items = col.querySelectorAll('.picker-item');
+  items.forEach(el => el.classList.remove('sel'));
+  if (items[idx]) items[idx].classList.add('sel');
+  col.dataset.idx = idx;
+}
+function snapPicker(col, values) {
+  const idx = Math.max(0, Math.min(values.length - 1, Math.round(col.scrollTop / ITEM_H)));
+  col.scrollTo({ top: idx * ITEM_H, behavior: 'smooth' });
+  markSelected(col, idx);
+}
+function getPickerValue(id, values) {
+  const idx = +document.getElementById(id).dataset.idx || 0;
+  return values[idx];
+}
+buildPicker('picker-hr', HR_VALUES, v => v, 1);
+buildPicker('picker-min', MIN_VALUES, v => String(v).padStart(2,'0'), 0);
+
+function fmtTime(s) {
+  s = Math.max(0, Math.round(s));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`
+    : `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
 
 // ── Setup wiring ───────────────────────────────────
 document.querySelectorAll('.pre-btn').forEach(b => {
@@ -558,9 +692,54 @@ function startOMR() {
     marks.w = +document.getElementById('mk-w').value || -1;
     marks.s = +document.getElementById('mk-s').value || 0;
   }
-  studentAns = {}; keyAns = {};
+
+  if (mode === 'test') {
+    const hr = getPickerValue('picker-hr', HR_VALUES);
+    const min = getPickerValue('picker-min', MIN_VALUES);
+    testSeconds = hr * 3600 + min * 60;
+    if (testSeconds <= 0) { alert('Please set a timer length for Test Mode.'); return; }
+  }
+
+  studentAns = {}; keyAns = {}; locked = false; timeUsed = 0;
   buildSheet();
   show('omr-screen');
+  startTimer();
+}
+
+// ── Session timer ───────────────────────────────────
+function startTimer() {
+  clearInterval(timerHandle);
+  locked = false;
+  document.getElementById('lock-banner').classList.remove('on');
+  document.getElementById('omr-sheet').classList.remove('locked');
+  document.getElementById('omr-timer').style.display = 'flex';
+  sessionStart = Date.now();
+
+  function tick() {
+    if (mode === 'test') {
+      const remaining = testSeconds - Math.floor((Date.now() - sessionStart) / 1000);
+      if (remaining <= 0) {
+        document.getElementById('timer-disp').textContent = fmtTime(0);
+        finishTest();
+        return;
+      }
+      document.getElementById('timer-disp').textContent = fmtTime(remaining);
+      document.getElementById('omr-timer').classList.toggle('low', remaining <= 60);
+    } else {
+      document.getElementById('timer-disp').textContent = fmtTime((Date.now() - sessionStart) / 1000);
+    }
+  }
+  tick();
+  timerHandle = setInterval(tick, 1000);
+}
+
+function finishTest() {
+  clearInterval(timerHandle);
+  locked = true;
+  timeUsed = testSeconds;
+  document.getElementById('omr-sheet').classList.add('locked');
+  document.getElementById('lock-banner').classList.add('on');
+  setTimeout(openKey, 900);
 }
 
 // ── Build OMR Sheet ────────────────────────────────
@@ -584,6 +763,7 @@ function buildSheet() {
 }
 
 function pick(q, o) {
+  if (locked) return;
   document.querySelectorAll(`#bs-${q} .bbl`).forEach(b => b.classList.remove('sel'));
   if (studentAns[q] === o) { delete studentAns[q]; }
   else {
@@ -665,6 +845,13 @@ function calcResults() {
   }
   if (!Object.keys(keyAns).length) { alert('Please enter the answer key first!'); return; }
 
+  clearInterval(timerHandle);
+  locked = true;
+  document.getElementById('omr-sheet').classList.add('locked');
+  timeUsed = mode === 'test'
+    ? Math.min(testSeconds, Math.floor((Date.now() - sessionStart) / 1000))
+    : Math.floor((Date.now() - sessionStart) / 1000);
+
   let correct = 0, wrong = 0, skipped = 0, totalMarks = 0;
   const kCount = Object.keys(keyAns).length;
 
@@ -695,6 +882,9 @@ function showResults(correct, wrong, skipped, totalMarks, kCount) {
   } else {
     document.getElementById('r-marks').innerHTML = '';
   }
+
+  document.getElementById('r-time').innerHTML =
+    `${mode === 'test' ? 'Time Used' : 'Time Taken'}: <strong>${fmtTime(timeUsed)}</strong>`;
 
   // Build breakdown
   const rg = document.getElementById('r-grid');
@@ -735,8 +925,13 @@ function show(id) {
 }
 
 function reset() {
+  clearInterval(timerHandle);
+  locked = false;
   studentAns = {}; keyAns = {};
   document.getElementById('key-ta').value = '';
+  document.getElementById('omr-sheet').classList.remove('locked');
+  document.getElementById('lock-banner').classList.remove('on');
+  document.getElementById('omr-timer').style.display = 'none';
   show('setup-screen');
 }
 </script>
