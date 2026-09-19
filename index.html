@@ -611,6 +611,25 @@ const HR_VALUES = [0,1,2,3,4,5,6];
 const MIN_VALUES = [0,5,10,15,20,25,30,35,40,45,50,55];
 const ITEM_H = 36;
 
+// ── Session persistence (survive a page refresh) ────
+const STORAGE_KEY = 'omrSession_v1';
+function saveSession() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      totalQ, useMarks, marks, mode, testSeconds, sessionStart, studentAns
+    }));
+  } catch (e) { /* storage unavailable — fail silently */ }
+}
+function clearSession() {
+  try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+}
+function loadSession() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+
 document.getElementById('mode-tog').addEventListener('change', e => {
   mode = e.target.checked ? 'test' : 'practice';
   document.getElementById('timer-wrap').classList.toggle('vis', mode === 'test');
@@ -704,16 +723,17 @@ function startOMR() {
   buildSheet();
   show('omr-screen');
   startTimer();
+  saveSession();
 }
 
 // ── Session timer ───────────────────────────────────
-function startTimer() {
+function startTimer(resumeStart) {
   clearInterval(timerHandle);
   locked = false;
   document.getElementById('lock-banner').classList.remove('on');
   document.getElementById('omr-sheet').classList.remove('locked');
   document.getElementById('omr-timer').style.display = 'flex';
-  sessionStart = Date.now();
+  sessionStart = resumeStart || Date.now();
 
   function tick() {
     if (mode === 'test') {
@@ -771,6 +791,7 @@ function pick(q, o) {
     document.querySelector(`#bs-${q} .bbl[data-o="${o}"]`).classList.add('sel');
   }
   updateProg();
+  saveSession();
 }
 
 function updateProg() {
@@ -848,6 +869,7 @@ function calcResults() {
   clearInterval(timerHandle);
   locked = true;
   document.getElementById('omr-sheet').classList.add('locked');
+  clearSession();
   timeUsed = mode === 'test'
     ? Math.min(testSeconds, Math.floor((Date.now() - sessionStart) / 1000))
     : Math.floor((Date.now() - sessionStart) / 1000);
@@ -928,12 +950,53 @@ function reset() {
   clearInterval(timerHandle);
   locked = false;
   studentAns = {}; keyAns = {};
+  clearSession();
   document.getElementById('key-ta').value = '';
   document.getElementById('omr-sheet').classList.remove('locked');
   document.getElementById('lock-banner').classList.remove('on');
   document.getElementById('omr-timer').style.display = 'none';
   show('setup-screen');
 }
+
+// ── Resume an in-progress session after a refresh ───
+function restoreSession() {
+  const s = loadSession();
+  if (!s || !s.studentAns) return;
+
+  totalQ = s.totalQ;
+  useMarks = s.useMarks;
+  marks = s.marks;
+  mode = s.mode;
+  testSeconds = s.testSeconds;
+  studentAns = s.studentAns;
+
+  // Reflect restored values on the setup screen too, in case the user
+  // goes back to it (e.g. via "New Practice Session").
+  document.getElementById('cust-q').value = totalQ;
+  document.querySelectorAll('.pre-btn').forEach(b =>
+    b.classList.toggle('on', +b.dataset.v === totalQ));
+  document.getElementById('mark-tog').checked = useMarks;
+  document.getElementById('mf').classList.toggle('vis', useMarks);
+  document.getElementById('mk-c').value = marks.c;
+  document.getElementById('mk-w').value = marks.w;
+  document.getElementById('mk-s').value = marks.s;
+  document.getElementById('mode-tog').checked = mode === 'test';
+  document.getElementById('timer-wrap').classList.toggle('vis', mode === 'test');
+  document.getElementById('mode-desc').textContent = mode === 'test'
+    ? 'On — sheet auto-submits when the timer runs out'
+    : 'Off — practice at your own pace, timer just counts up';
+
+  buildSheet();
+  for (const q in studentAns) {
+    const el = document.querySelector(`#bs-${q} .bbl[data-o="${studentAns[q]}"]`);
+    if (el) el.classList.add('sel');
+  }
+  updateProg();
+  show('omr-screen');
+  startTimer(s.sessionStart);   // resumes the clock from where it left off
+}
+restoreSession();
+
 </script>
 </body>
 </html>
